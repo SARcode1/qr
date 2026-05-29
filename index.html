@@ -430,6 +430,48 @@
       gap: 10px;
     }
 
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: 50;
+      display: grid;
+      place-items: center;
+      padding: 18px;
+      background: rgba(15, 23, 42, 0.36);
+      backdrop-filter: blur(8px);
+    }
+
+    .modal-backdrop[hidden] {
+      display: none !important;
+    }
+
+    .modal {
+      width: min(100%, 430px);
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      box-shadow: 0 28px 80px rgba(15, 23, 42, 0.22);
+      padding: 18px;
+    }
+
+    .modal h2 {
+      margin: 0 0 8px;
+      font-size: 1.2rem;
+    }
+
+    .modal p {
+      margin: 0 0 16px;
+      color: var(--muted);
+      line-height: 1.7;
+    }
+
+    .modal-actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-top: 16px;
+    }
+
     @media (min-width: 560px) {
       .page { padding: 34px 24px 46px; }
       .row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -497,6 +539,14 @@
       .qr-frame canvas {
         display: block;
         margin-inline: auto;
+      }
+    }
+
+    @media (max-width: 600px) {
+      textarea,
+      input,
+      select {
+        font-size: 16px;
       }
     }
 
@@ -634,13 +684,28 @@
           <div class="status" id="status" role="status" aria-live="polite"></div>
           <div class="preview-actions">
             <button class="btn btn-primary" id="downloadBtn" type="button" disabled>تحميل PNG</button>
-            <button class="btn btn-outline" id="copyBtn" type="button" disabled>نسخ الصورة</button>
-            <button class="btn btn-outline" id="regenerateBtn" type="button">تحديث</button>
+            <button class="btn btn-outline" id="copyBtn" type="button" disabled>مشاركة الصورة</button>
+            <button class="btn btn-outline" id="labelsBtn" type="button">ملصقات PDF</button>
           </div>
         </div>
       </aside>
     </section>
   </main>
+
+  <div class="modal-backdrop" id="labelsModal" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="labelsModalTitle">
+      <h2 id="labelsModalTitle">ملصقات QR</h2>
+      <p>اكتب عنوانًا اختياريًا يظهر تحت كل رمز QR، أو اتركه فارغًا لتحميل الملصقات بدون عنوان.</p>
+      <div class="field">
+        <label for="labelTitleInput">عنوان الملصق</label>
+        <input id="labelTitleInput" type="text" maxlength="48" placeholder="مثال: التقرير السنوي">
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-primary" id="printLabelsBtn" type="button">تحميل PDF</button>
+        <button class="btn btn-outline" id="closeLabelsModalBtn" type="button">إلغاء</button>
+      </div>
+    </div>
+  </div>
 
   <script>
     "use strict";
@@ -1031,7 +1096,11 @@
       placeholder: document.getElementById("placeholder"),
       status: document.getElementById("status"),
       generate: document.getElementById("generateBtn"),
-      regenerate: document.getElementById("regenerateBtn"),
+      labels: document.getElementById("labelsBtn"),
+      labelsModal: document.getElementById("labelsModal"),
+      labelTitle: document.getElementById("labelTitleInput"),
+      printLabels: document.getElementById("printLabelsBtn"),
+      closeLabelsModal: document.getElementById("closeLabelsModalBtn"),
       download: document.getElementById("downloadBtn"),
       copy: document.getElementById("copyBtn"),
       reset: document.getElementById("resetBtn"),
@@ -1164,7 +1233,7 @@
         els.canvas.hidden = false;
         els.placeholder.hidden = true;
         els.download.disabled = false;
-        els.copy.disabled = !navigator.clipboard || typeof ClipboardItem === "undefined";
+        els.copy.disabled = false;
         setStatus("تم إنشاء رمز QR بجودة عالية.", "ok");
       } catch (error) {
         setStatus(error.message || "تعذر إنشاء رمز QR. جرّب نصًا أقصر.", "error");
@@ -1186,20 +1255,286 @@
       link.click();
     }
 
-    async function copyImage() {
-      if (!lastQr || !navigator.clipboard || typeof ClipboardItem === "undefined") {
-        setStatus("نسخ الصورة غير مدعوم في هذا المتصفح.", "error");
+    function escapeHtml(value) {
+      return String(value).replace(/[&<>"']/g, char => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        "\"": "&quot;",
+        "'": "&#039;"
+      })[char]);
+    }
+
+    function openLabelsModal() {
+      if (!lastQr) {
+        setStatus("أنشئ رمز QR أولًا قبل تجهيز الملصقات.", "error");
         return;
       }
-      refreshIfReady();
-      els.canvas.toBlob(async blob => {
-        try {
-          await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
-          setStatus("تم نسخ الصورة إلى الحافظة.", "ok");
-        } catch (error) {
-          setStatus("تعذر نسخ الصورة. قد يحتاج المتصفح إلى إذن إضافي.", "error");
+      els.labelsModal.hidden = false;
+      els.labelTitle.focus();
+    }
+
+    function closeLabelsModal() {
+      els.labelsModal.hidden = true;
+    }
+
+    function dataUrlToBytes(dataUrl) {
+      const base64 = dataUrl.split(",")[1];
+      const binary = atob(base64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      return bytes;
+    }
+
+    function asciiBytes(value) {
+      const bytes = new Uint8Array(value.length);
+      for (let i = 0; i < value.length; i++) bytes[i] = value.charCodeAt(i) & 0xff;
+      return bytes;
+    }
+
+    function concatBytes(parts) {
+      const total = parts.reduce((sum, part) => sum + part.length, 0);
+      const output = new Uint8Array(total);
+      let offset = 0;
+      parts.forEach(part => {
+        output.set(part, offset);
+        offset += part.length;
+      });
+      return output;
+    }
+
+    function fitSingleLine(ctx, text, maxWidth) {
+      if (!text || ctx.measureText(text).width <= maxWidth) return text;
+      let value = text;
+      while (value.length > 1 && ctx.measureText(value + "...").width > maxWidth) {
+        value = value.slice(0, -1);
+      }
+      return value + "...";
+    }
+
+    function canvasToRgbImage(canvas) {
+      const ctx = canvas.getContext("2d");
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+      const bytes = new Uint8Array(canvas.width * canvas.height * 3);
+      for (let source = 0, target = 0; source < imageData.length; source += 4) {
+        const alpha = imageData[source + 3] / 255;
+        bytes[target++] = Math.round(imageData[source] * alpha + 255 * (1 - alpha));
+        bytes[target++] = Math.round(imageData[source + 1] * alpha + 255 * (1 - alpha));
+        bytes[target++] = Math.round(imageData[source + 2] * alpha + 255 * (1 - alpha));
+      }
+      return { bytes, width: canvas.width, height: canvas.height };
+    }
+
+    function makeLabelImage(title) {
+      const canvas = document.createElement("canvas");
+      const size = 1800;
+      const ratio = size / 900;
+      const ctx = canvas.getContext("2d");
+      canvas.width = size;
+      canvas.height = size;
+
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, size, size);
+
+      const border = 92 * ratio;
+      const borderSize = size - border * 2;
+      ctx.save();
+      ctx.strokeStyle = "#cbd5e1";
+      ctx.lineWidth = 3 * ratio;
+      ctx.setLineDash([10 * ratio, 8 * ratio]);
+      roundRect(ctx, border, border, borderSize, borderSize, 16 * ratio);
+      ctx.stroke();
+      ctx.restore();
+
+      const qrSize = (title ? 520 : 620) * ratio;
+      const qrX = Math.round((size - qrSize) / 2);
+      const qrY = (title ? 108 : 130) * ratio;
+      const qrCanvas = document.createElement("canvas");
+      drawQrToCanvas(lastQr, qrCanvas, 2048);
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = "high";
+      ctx.drawImage(qrCanvas, qrX, qrY, qrSize, qrSize);
+
+      if (title) {
+        ctx.save();
+        ctx.direction = "rtl";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillStyle = "#111827";
+        ctx.font = `800 ${54 * ratio}px -apple-system, BlinkMacSystemFont, 'Segoe UI', Tahoma, Arial, sans-serif`;
+        const fitted = fitSingleLine(ctx, title, borderSize - 86 * ratio);
+        ctx.fillText(fitted, size / 2, qrY + qrSize + 92 * ratio);
+        ctx.restore();
+      }
+
+      return canvasToRgbImage(canvas);
+    }
+
+    function makeFooterLogoImage() {
+      const logo = document.querySelector(".brand-logo");
+      const canvas = document.createElement("canvas");
+      const width = 1000;
+      const height = 260;
+      const ctx = canvas.getContext("2d");
+      canvas.width = width;
+      canvas.height = height;
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, width, height);
+
+      if (logo && logo.complete && logo.naturalWidth && logo.naturalHeight) {
+        const ratio = Math.min(width / logo.naturalWidth, height / logo.naturalHeight);
+        const drawW = Math.round(logo.naturalWidth * ratio);
+        const drawH = Math.round(logo.naturalHeight * ratio);
+        const x = Math.round((width - drawW) / 2);
+        const y = Math.round((height - drawH) / 2);
+        ctx.drawImage(logo, x, y, drawW, drawH);
+      } else {
+        ctx.fillStyle = "#0f3f8f";
+        ctx.font = "800 96px -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText("SAR CODE", width / 2, height / 2);
+      }
+
+      return canvasToRgbImage(canvas);
+    }
+
+    function buildLabelsPdf(labelImage, logoImageData) {
+      const pageW = 595.28;
+      const pageH = 841.89;
+      const marginX = 36;
+      const top = 56;
+      const gapX = 17;
+      const gapY = 22;
+      const labelSize = (pageW - marginX * 2 - gapX * 2) / 3;
+      const logoW = 132;
+      const logoH = 34.32;
+      const logoX = (pageW - logoW) / 2;
+      const logoY = 22;
+      const commands = [];
+
+      for (let row = 0; row < 4; row++) {
+        for (let col = 0; col < 3; col++) {
+          const x = marginX + col * (labelSize + gapX);
+          const y = pageH - top - labelSize - row * (labelSize + gapY);
+          commands.push(`q ${labelSize.toFixed(2)} 0 0 ${labelSize.toFixed(2)} ${x.toFixed(2)} ${y.toFixed(2)} cm /Im0 Do Q`);
         }
-      }, "image/png");
+      }
+      commands.push(`q ${logoW.toFixed(2)} 0 0 ${logoH.toFixed(2)} ${logoX.toFixed(2)} ${logoY.toFixed(2)} cm /Im1 Do Q`);
+
+      const contentBytes = asciiBytes(commands.join("\n") + "\n");
+      const objects = [
+        asciiBytes("<< /Type /Catalog /Pages 2 0 R >>"),
+        asciiBytes("<< /Type /Pages /Kids [3 0 R] /Count 1 >>"),
+        asciiBytes(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${pageW} ${pageH}] /Resources << /XObject << /Im0 4 0 R /Im1 5 0 R >> >> /Contents 6 0 R >>`),
+        concatBytes([
+          asciiBytes(`<< /Type /XObject /Subtype /Image /Width ${labelImage.width} /Height ${labelImage.height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Length ${labelImage.bytes.length} >>\nstream\n`),
+          labelImage.bytes,
+          asciiBytes("\nendstream")
+        ]),
+        concatBytes([
+          asciiBytes(`<< /Type /XObject /Subtype /Image /Width ${logoImageData.width} /Height ${logoImageData.height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Length ${logoImageData.bytes.length} >>\nstream\n`),
+          logoImageData.bytes,
+          asciiBytes("\nendstream")
+        ]),
+        concatBytes([
+          asciiBytes(`<< /Length ${contentBytes.length} >>\nstream\n`),
+          contentBytes,
+          asciiBytes("endstream")
+        ])
+      ];
+
+      const parts = [asciiBytes("%PDF-1.4\n")];
+      const offsets = [0];
+      let length = parts[0].length;
+
+      objects.forEach((objectBytes, index) => {
+        offsets.push(length);
+        const prefix = asciiBytes(`${index + 1} 0 obj\n`);
+        const suffix = asciiBytes("\nendobj\n");
+        parts.push(prefix, objectBytes, suffix);
+        length += prefix.length + objectBytes.length + suffix.length;
+      });
+
+      const xrefOffset = length;
+      let xref = `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+      for (let i = 1; i < offsets.length; i++) {
+        xref += `${String(offsets[i]).padStart(10, "0")} 00000 n \n`;
+      }
+      xref += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`;
+      parts.push(asciiBytes(xref));
+
+      return concatBytes(parts);
+    }
+
+    function formatDateForFile(date = new Date()) {
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, "0");
+      const day = String(date.getDate()).padStart(2, "0");
+      return `${year}-${month}-${day}`;
+    }
+
+    function downloadPdf(bytes) {
+      const blob = new Blob([bytes], { type: "application/pdf" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `QR-${formatDateForFile()}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+
+    function printLabels() {
+      if (!lastQr) {
+        closeLabelsModal();
+        setStatus("أنشئ رمز QR أولًا قبل تجهيز الملصقات.", "error");
+        return;
+      }
+
+      refreshIfReady();
+      const title = els.labelTitle.value.trim();
+      const labelDataUrl = makeLabelImage(title);
+      const logoDataUrl = makeFooterLogoImage();
+      const pdfBytes = buildLabelsPdf(labelDataUrl, logoDataUrl);
+      downloadPdf(pdfBytes);
+      closeLabelsModal();
+      setStatus("تم تحميل ملف ملصقات PDF مباشرة.", "ok");
+    }
+
+    function canvasToPngBlob() {
+      return new Promise(resolve => {
+        els.canvas.toBlob(blob => resolve(blob), "image/png");
+      });
+    }
+
+    async function shareOrDownloadImage(blob) {
+      const file = new File([blob], "qr-code.png", { type: "image/png" });
+      if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
+        await navigator.share({
+          files: [file],
+          title: "QR Code",
+          text: "رمز QR"
+        });
+        setStatus("تم فتح خيارات مشاركة الصورة.", "ok");
+        return;
+      }
+
+      downloadPng();
+      setStatus("Safari لا يدعم نسخ الصورة مباشرة، لذلك تم تحميل PNG بدلًا من ذلك.", "ok");
+    }
+
+    async function shareImage() {
+      if (!lastQr) return;
+      refreshIfReady();
+      const blob = await canvasToPngBlob();
+      if (!blob) {
+        setStatus("تعذر تجهيز الصورة. جرّب تحميل PNG.", "error");
+        return;
+      }
+
+      await shareOrDownloadImage(blob);
     }
 
     function resetAll() {
@@ -1277,9 +1612,14 @@
     });
 
     els.generate.addEventListener("click", generateQr);
-    els.regenerate.addEventListener("click", generateQr);
+    els.labels.addEventListener("click", openLabelsModal);
+    els.printLabels.addEventListener("click", printLabels);
+    els.closeLabelsModal.addEventListener("click", closeLabelsModal);
+    els.labelsModal.addEventListener("click", event => {
+      if (event.target === els.labelsModal) closeLabelsModal();
+    });
     els.download.addEventListener("click", downloadPng);
-    els.copy.addEventListener("click", copyImage);
+    els.copy.addEventListener("click", shareImage);
     els.reset.addEventListener("click", resetAll);
     els.text.addEventListener("keydown", event => {
       if ((event.ctrlKey || event.metaKey) && event.key === "Enter") generateQr();
