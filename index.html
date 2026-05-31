@@ -1209,6 +1209,19 @@
       const radius = Math.round(bgBox * 0.16);
       const lineWidth = Math.max(4, Math.round(size * 0.008));
       ctx.save();
+      if (els.transparentBg.checked) {
+        ctx.globalCompositeOperation = "destination-out";
+        roundRect(ctx, bgX, bgY, bgBox, bgBox, radius);
+        ctx.fill();
+        ctx.globalCompositeOperation = "source-over";
+        ctx.lineWidth = lineWidth;
+        ctx.strokeStyle = els.fg.value;
+        roundRect(ctx, bgX, bgY, bgBox, bgBox, radius);
+        ctx.stroke();
+        ctx.restore();
+        return;
+      }
+
       ctx.shadowColor = "rgba(15, 23, 42, 0.18)";
       ctx.shadowBlur = Math.max(10, Math.round(size * 0.018));
       ctx.shadowOffsetY = Math.max(2, Math.round(size * 0.004));
